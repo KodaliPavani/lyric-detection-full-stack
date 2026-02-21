@@ -475,25 +475,102 @@ def search_songs_in_db(song_db, query, max_results=20):
 # ============================================================
 # HELPER FUNCTIONS
 # ============================================================
+
+# Filler words/sounds commonly found in lyrics that don't carry emotion
+FILLER_PATTERNS = [
+    r'\b(oh+|ooh+|ah+|uh+|eh+|mm+|hmm+|yeah+|ya+|hey+|whoa+|wo+ah)\b',
+    r'\b(la la|na na|da da|sha la|do do|ba ba|tra la)\b',
+    r'\b(verse|chorus|bridge|outro|intro|hook|repeat|x\d+|\d+x)\b',
+    r'\[.*?\]',          # Remove [Verse 1], [Chorus], etc.
+    r'\(.*?\)',           # Remove (repeat), (x2), etc.
+]
+
 def preprocess_text(text):
-    """Clean and truncate text for model input."""
+    """Clean lyrics text for model input — removes fillers and noise."""
     text = str(text).lower()
+    # Remove filler patterns
+    for pattern in FILLER_PATTERNS:
+        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+    # Remove special characters but keep apostrophes
     text = re.sub(r"[^\w\s']", " ", text)
+    # Collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
-    return text[:512]
+    return text
+
+def deduplicate_lines(text):
+    """Remove repeated/duplicate lines from lyrics (choruses, hooks)."""
+    lines = text.split("\n")
+    seen = set()
+    unique_lines = []
+    for line in lines:
+        cleaned_line = line.strip().lower()
+        if cleaned_line and len(cleaned_line) > 5 and cleaned_line not in seen:
+            seen.add(cleaned_line)
+            unique_lines.append(line.strip())
+    return " ".join(unique_lines)
+
+def split_into_chunks(text, max_chunk_size=450):
+    """Split text into meaningful chunks that fit the model's token limit."""
+    words = text.split()
+    chunks = []
+    current_chunk = []
+    current_len = 0
+    
+    for word in words:
+        if current_len + len(word) + 1 > max_chunk_size and current_chunk:
+            chunks.append(" ".join(current_chunk))
+            current_chunk = []
+            current_len = 0
+        current_chunk.append(word)
+        current_len += len(word) + 1
+    
+    if current_chunk:
+        chunks.append(" ".join(current_chunk))
+    
+    return chunks if chunks else [text[:max_chunk_size]]
 
 def predict_emotions(classifier, text):
-    """Predict emotion probabilities for a given text."""
-    cleaned = preprocess_text(text)
-    if not cleaned.strip():
+    """Predict emotion probabilities using multi-chunk analysis for accuracy."""
+    # Step 1: Deduplicate lines (remove repeated choruses)
+    deduped = deduplicate_lines(text)
+    
+    # Step 2: Clean the text
+    cleaned = preprocess_text(deduped)
+    if not cleaned.strip() or len(cleaned) < 5:
         return {e: 0.0 for e in EMOTION_EMOJIS}
     
-    results = classifier(cleaned)[0]
+    # Step 3: Split into chunks for long lyrics
+    chunks = split_into_chunks(cleaned, max_chunk_size=450)
+    
+    # Step 4: Analyze each chunk
+    all_scores = {e: [] for e in EMOTION_EMOJIS}
+    
+    for chunk in chunks[:5]:  # Max 5 chunks to keep it fast
+        if len(chunk.strip()) < 10:
+            continue
+        try:
+            results = classifier(chunk, truncation=True, max_length=512)[0]
+            for item in results:
+                label = item["label"].lower()
+                if label in all_scores:
+                    all_scores[label].append(item["score"] * 100)
+        except Exception:
+            continue
+    
+    # Step 5: Weighted average — give more weight to higher-scoring chunks
     emotions = {}
-    for item in results:
-        label = item["label"].lower()
-        score = round(item["score"] * 100, 2)
-        emotions[label] = score
+    for emotion, scores in all_scores.items():
+        if scores:
+            # Weighted: higher scores contribute more
+            weights = [s ** 1.5 for s in scores]
+            total_weight = sum(weights)
+            if total_weight > 0:
+                emotions[emotion] = round(sum(s * w for s, w in zip(scores, weights)) / total_weight, 2)
+            else:
+                emotions[emotion] = round(np.mean(scores), 2)
+        else:
+            emotions[emotion] = 0.0
+    
     return emotions
 
 def get_dominant_emotion(emotions):
