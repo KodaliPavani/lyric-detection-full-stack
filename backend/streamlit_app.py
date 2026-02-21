@@ -1,5 +1,5 @@
 """
-🎵 Song Lyrics Emotion Detection AI
+🎵 Song Lyrics Emotion Detection
 A Data-Driven Approach to Understanding Human Emotions
 Built with Streamlit, HuggingFace Transformers, and Plotly
 """
@@ -24,12 +24,14 @@ import re
 import io
 import time
 import glob
+import speech_recognition as sr
+import streamlit.components.v1 as components
 
 # ============================================================
 # PAGE CONFIG
 # ============================================================
 st.set_page_config(
-    page_title="🎵 Song Lyrics Emotion Detection AI",
+    page_title="🎵 Song Lyrics Emotion Detection",
     page_icon="🎵",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -40,26 +42,28 @@ st.set_page_config(
 # ============================================================
 st.markdown("""
 <style>
-    /* Global Styles */
-    .main {
-        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-    }
-    
-    .stApp {
-        background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
-    }
-    
-    /* Header Styles */
+    /* ========================================= */
+    /* 1. GLOBAL VARIABLES & BASE STYLES         */
+    /* ========================================= */
+    .main { background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); }
+    .stApp { background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%); }
+    #MainMenu { visibility: hidden; }
+    footer { visibility: hidden; }
+    header { visibility: hidden; }
+    .stDeployButton { display: none; }
+
+    /* ========================================= */
+    /* 2. LAYOUT COMPONENTS                      */
+    /* ========================================= */
     .main-header {
         text-align: center;
-        padding: 2rem 0;
+        padding: 2rem 1rem;
         background: linear-gradient(135deg, rgba(102, 126, 234, 0.15), rgba(118, 75, 162, 0.15));
         border-radius: 20px;
         border: 1px solid rgba(255, 255, 255, 0.1);
         backdrop-filter: blur(10px);
         margin-bottom: 2rem;
     }
-    
     .main-header h1 {
         font-size: 2.5rem;
         background: linear-gradient(135deg, #667eea, #764ba2, #f093fb);
@@ -68,13 +72,11 @@ st.markdown("""
         font-weight: 800;
         margin-bottom: 0.5rem;
     }
-    
     .main-header p {
         color: #a0aec0;
         font-size: 1.1rem;
     }
     
-    /* Glass Card */
     .glass-card {
         background: rgba(255, 255, 255, 0.05);
         border-radius: 16px;
@@ -84,13 +86,49 @@ st.markdown("""
         margin-bottom: 1.5rem;
         transition: transform 0.3s ease, box-shadow 0.3s ease;
     }
-    
     .glass-card:hover {
         transform: translateY(-2px);
         box-shadow: 0 8px 32px rgba(102, 126, 234, 0.2);
     }
     
-    /* Emotion Badge */
+    .gradient-divider {
+        height: 2px;
+        background: linear-gradient(90deg, transparent, #667eea, #764ba2, transparent);
+        margin: 1.5rem 0;
+        border: none;
+    }
+
+    /* ========================================= */
+    /* 3. METRICS & BADGES                       */
+    /* ========================================= */
+    .metric-card {
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.2rem;
+        text-align: center;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+    }
+    
+    .metric-value {
+        font-size: 2rem;
+        font-weight: 800;
+        background: linear-gradient(135deg, #667eea, #764ba2);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        margin: 0.5rem 0;
+    }
+    
+    .metric-label {
+        color: #a0aec0;
+        font-size: 0.85rem;
+        margin-top: auto;
+    }
+
     .emotion-badge {
         display: inline-block;
         padding: 0.5rem 1.5rem;
@@ -107,36 +145,14 @@ st.markdown("""
     .emotion-fear { background: linear-gradient(135deg, #4facfe, #00f2fe); color: #333; }
     .emotion-surprise { background: linear-gradient(135deg, #43e97b, #38f9d7); color: #333; }
     .emotion-love { background: linear-gradient(135deg, #f093fb, #f5576c); color: white; }
-    
-    /* Metric Card */
-    .metric-card {
-        background: rgba(255, 255, 255, 0.08);
-        border-radius: 12px;
-        padding: 1.2rem;
-        text-align: center;
-        border: 1px solid rgba(255, 255, 255, 0.1);
-    }
-    
-    .metric-value {
-        font-size: 2rem;
-        font-weight: 800;
-        background: linear-gradient(135deg, #667eea, #764ba2);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    
-    .metric-label {
-        color: #a0aec0;
-        font-size: 0.85rem;
-        margin-top: 0.3rem;
-    }
-    
-    /* Sidebar Styles */
+
+    /* ========================================= */
+    /* 4. STREAMLIT ELEMENTS OVERRIDES           */
+    /* ========================================= */
     section[data-testid="stSidebar"] {
         background: linear-gradient(180deg, #1a1a2e 0%, #16213e 100%);
     }
     
-    /* Button Styles */
     .stButton > button {
         background: linear-gradient(135deg, #667eea, #764ba2) !important;
         color: white !important;
@@ -147,6 +163,9 @@ st.markdown("""
         font-size: 1rem !important;
         transition: all 0.3s ease !important;
         width: 100%;
+        display: flex;
+        justify-content: center;
+        align-items: center;
     }
     
     .stButton > button:hover {
@@ -154,20 +173,10 @@ st.markdown("""
         box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4) !important;
     }
     
-    /* Progress Bar */
     .stProgress > div > div {
         background: linear-gradient(135deg, #667eea, #764ba2) !important;
     }
     
-    /* Divider */
-    .gradient-divider {
-        height: 2px;
-        background: linear-gradient(90deg, transparent, #667eea, #764ba2, transparent);
-        margin: 1.5rem 0;
-        border: none;
-    }
-    
-    /* Text Area */
     .stTextArea textarea {
         background: rgba(255, 255, 255, 0.05) !important;
         border: 1px solid rgba(255, 255, 255, 0.15) !important;
@@ -175,13 +184,9 @@ st.markdown("""
         color: white !important;
     }
     
-    /* Hide Streamlit branding */
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    
-    /* Tabs */
     .stTabs [data-baseweb="tab-list"] {
         gap: 8px;
+        flex-wrap: wrap;
     }
     
     .stTabs [data-baseweb="tab"] {
@@ -190,14 +195,124 @@ st.markdown("""
         border: 1px solid rgba(255, 255, 255, 0.1);
         color: #a0aec0;
         padding: 10px 20px;
+        white-space: nowrap;
+        margin-bottom: 5px;
     }
     
     .stTabs [aria-selected="true"] {
         background: linear-gradient(135deg, #667eea, #764ba2) !important;
         color: white !important;
     }
+
+    /* ========================================= */
+    /* 5. RESPONSIVE MEDIA QUERIES               */
+    /* ========================================= */
+    @media screen and (max-width: 768px) {
+        .main-header {
+            padding: 1.5rem 1rem;
+        }
+        .main-header h1 {
+            font-size: 1.8rem;
+        }
+        .main-header p {
+            font-size: 0.95rem;
+        }
+        .metric-value {
+            font-size: 1.5rem;
+        }
+        .glass-card {
+            padding: 1rem;
+            margin-bottom: 1rem;
+        }
+        .emotion-badge {
+            font-size: 1rem;
+            padding: 0.4rem 1.2rem;
+        }
+        .stButton > button {
+            padding: 0.6rem 1rem !important;
+            font-size: 0.9rem !important;
+        }
+        .stTabs [data-baseweb="tab"] {
+            padding: 6px 10px;
+            font-size: 0.8rem;
+        }
+        div[data-testid="column"] {
+            min-width: 100% !important;
+            margin-bottom: 1rem;
+        }
+    }
 </style>
 """, unsafe_allow_html=True)
+
+# ============================================================
+# PROGRESSIVE WEB APP (PWA) REGISTRATION
+# ============================================================
+pwa_script = '''
+<script>
+    if (window.parent.navigator.serviceWorker) {
+        const manifest = {
+            "name": "🎵 Song Lyrics Emotion Detection",
+            "short_name": "MoodMate AI",
+            "description": "Analyze the emotional fingerprint of any song.",
+            "start_url": "./",
+            "display": "standalone",
+            "background_color": "#0f0c29",
+            "theme_color": "#667eea",
+            "icons": [
+                {
+                    "src": "https://cdn-icons-png.flaticon.com/512/3048/3048122.png",
+                    "sizes": "192x192",
+                    "type": "image/png"
+                },
+                {
+                    "src": "https://cdn-icons-png.flaticon.com/512/3048/3048122.png",
+                    "sizes": "512x512",
+                    "type": "image/png"
+                }
+            ]
+        };
+        const manifestBlob = new Blob([JSON.stringify(manifest)], {type: 'application/json'});
+        const manifestUrl = URL.createObjectURL(manifestBlob);
+        
+        let link = window.parent.document.querySelector('link[rel="manifest"]');
+        if (!link) {
+            link = window.parent.document.createElement('link');
+            link.rel = 'manifest';
+            window.parent.document.head.appendChild(link);
+        }
+        link.href = manifestUrl;
+
+        const sw = `
+            self.addEventListener('install', e => {
+                console.log('PWA Service Worker Install');
+            });
+            self.addEventListener('fetch', e => {
+                const url = new URL(e.request.url);
+                if (url.pathname.includes('/_stcore/')) {
+                    // Do not cache websockets or live Streamlit data
+                    return fetch(e.request);
+                }
+                
+                // Network-first strategy for frontend assets
+                e.respondWith(
+                    fetch(e.request).catch(function() {
+                        return caches.match(e.request);
+                    })
+                );
+            });
+        `;
+        const blob = new Blob([sw], {type: 'application/javascript'});
+        const url = URL.createObjectURL(blob);
+        
+        window.parent.navigator.serviceWorker.register(url)
+            .then(function(r) { console.log('PWA SW registered!'); })
+            .catch(function(e) { console.log('SW error!', e); });
+    }
+</script>
+'''
+components.html(pwa_script, height=0, width=0)
+
+
 
 # ============================================================
 # CONSTANTS
@@ -585,9 +700,99 @@ def compute_intensity_score(emotions):
     intensity = (max_val - mean_val) / max_val if max_val > 0 else 0
     return round(intensity * 100, 1)
 
+def transcribe_audio(audio_bytes):
+    """Transcribe audio bytes to text using SpeechRecognition."""
+    recognizer = sr.Recognizer()
+    try:
+        with sr.AudioFile(audio_bytes) as source:
+            audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data)
+            return text
+    except Exception as e:
+        print(f"Transcription error: {e}")
+        return ""
+
+def predict_emotion_line_by_line(text, model, tfidf, le):
+    """Analyze emotions line-by-line using the fast ML model for the Journey Map & Line Highlighter."""
+    lines = [line.strip() for line in text.split('\n') if len(line.strip()) > 5]
+    if not lines:
+        return []
+    
+    line_results = []
+    for idx, line in enumerate(lines):
+        label, probas = ml_predict(line, model, tfidf, le)
+        line_results.append({
+            "line_num": idx + 1,
+            "text": line,
+            "emotion": label,
+            "score": probas.get(label, 0)
+        })
+    return line_results
+
 # ============================================================
 # VISUALIZATION FUNCTIONS
 # ============================================================
+def create_journey_map_chart(line_results):
+    """Create a timeline chart showing emotion journey throughout the song."""
+    if not line_results:
+        return go.Figure()
+
+    df = pd.DataFrame(line_results)
+    
+    # Map emotions to a numeric value for y-axis so they spread out
+    emotion_order = {"joy": 6, "surprise": 5, "love": 4, "fear": 3, "sadness": 2, "anger": 1}
+    df["y_val"] = df["emotion"].map(emotion_order)
+    
+    # Generate colors
+    colors = [EMOTION_COLORS.get(e, "#ffffff") for e in df["emotion"]]
+    emojis = [EMOTION_EMOJIS.get(e, "🎭") for e in df["emotion"]]
+    
+    fig = go.Figure()
+
+    # Add line tracing the journey
+    fig.add_trace(go.Scatter(
+        x=df["line_num"],
+        y=df["y_val"],
+        mode="lines+markers+text",
+        line=dict(color="rgba(255,255,255,0.2)", width=2),
+        marker=dict(
+            color=colors,
+            size=14,
+            line=dict(color="white", width=1.5)
+        ),
+        text=emojis,
+        textposition="top center",
+        customdata=df[["text", "emotion"]],
+        hovertemplate="<b>Line %{x}</b><br><i>%{customdata[0]}</i><br>Emotion: %{customdata[1]}<extra></extra>"
+    ))
+    
+    # Customize axis
+    fig.update_layout(
+        title=dict(text="🎢 Emotion Journey Map", font=dict(color="white", size=18)),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        xaxis=dict(
+            title="Song Timeline (Line #)",
+            title_font=dict(color="#a0aec0"),
+            tickfont=dict(color="white"),
+            showgrid=False
+        ),
+        yaxis=dict(
+            title="Emotion",
+            title_font=dict(color="#a0aec0"),
+            tickvals=list(emotion_order.values()),
+            ticktext=[e.capitalize() for e in emotion_order.keys()],
+            tickfont=dict(color="white"),
+            showgrid=True,
+            gridcolor="rgba(255,255,255,0.05)",
+            range=[0.5, 6.5]
+        ),
+        margin=dict(t=50, b=20, l=60, r=20),
+        height=400,
+        showlegend=False
+    )
+    return fig
+
 def create_bar_chart(emotions, title="Emotion Distribution"):
     """Create a beautiful bar chart for emotion distribution."""
     labels = [f"{EMOTION_EMOJIS.get(e, '')} {e.capitalize()}" for e in emotions.keys()]
@@ -809,9 +1014,8 @@ def create_dataset_heatmap(df, emotion_cols):
 # ============================================================
 st.markdown("""
 <div class="main-header">
-    <h1>🎵 Song Lyrics Emotion Detection AI</h1>
+    <h1>🎵 Song Lyrics Emotion Detection</h1>
     <p>A Data-Driven Approach to Understanding Human Emotions</p>
-    <p style="font-size: 0.85rem; color: #718096;">Powered by DistilBERT Transformer Model • HuggingFace</p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -819,12 +1023,20 @@ st.markdown("""
 # SIDEBAR
 # ============================================================
 with st.sidebar:
-    st.markdown("## ⚙️ Settings")
+    st.markdown("Emotion Intelligence Dashboard")
     st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
     
     mode = st.radio(
         "🔄 Select Mode",
-        ["🎤 Single Song Analysis", "📊 CSV Bulk Analysis", "🔀 Song Comparison", "🤖 ML Model Comparison", "🔍 Song Search"],
+        [
+            "🎤 Single Song Analysis", 
+            "📊 CSV Bulk Analysis", 
+            "🔀 Song Comparison", 
+            "🤖 ML Model Comparison", 
+            "🔍 Song Search",
+            "👤 Artist Emotion DNA",
+            "🎵 Mood Playlist Generator"
+        ],
         index=0
     )
     
@@ -832,13 +1044,17 @@ with st.sidebar:
     
     st.markdown("### 📖 How to Use")
     if "Single" in mode:
-        st.info("1. Paste song lyrics in the text area\n2. Click **Analyze Emotion**\n3. View emotion breakdown & charts\n4. Get YouTube song suggestions")
+        st.info("1. Enter lyrics (text/voice)\n2. Analyze Emotion\n3. View emotion breakdown charts\n4. See line-by-line Highlighter & Journey Map")
     elif "CSV" in mode:
         st.info("1. Upload a CSV with a **lyrics** or **Lyric** column\n2. Wait for batch processing\n3. Download results with emotion scores")
     elif "ML" in mode:
         st.info("1. View trained ML model metrics\n2. Compare Accuracy, F1, Precision, Recall\n3. Test lyrics across all models")
     elif "Search" in mode:
         st.info("1. Search songs by title or artist\n2. View detected emotion for each song\n3. Get YouTube suggestions")
+    elif "Artist Emotion DNA" in mode:
+        st.info("1. Select an artist from the dataset\n2. View their overall emotional fingerprint across all their songs")
+    elif "Playlist Simulator" in mode or "Mood Playlist Generator" in mode:
+        st.info("1. Pick a mood\n2. Get a curated AI playlist from the database + YouTube videos")
     else:
         st.info("1. Enter lyrics for 2+ songs\n2. Compare their emotional profiles\n3. View side-by-side analysis")
     
@@ -872,12 +1088,27 @@ if "Single" in mode:
     st.markdown("Paste song lyrics below to detect the emotional fingerprint.")
     st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
     
-    lyrics_input = st.text_area(
-        "📝 Enter Song Lyrics",
-        height=200,
-        placeholder="Paste your song lyrics here...\n\nExample: 'I'm walking on sunshine, whoa...'",
-        key="single_lyrics"
-    )
+    input_method = st.radio("Choose Input Method", ["📝 Text", "🎤 Voice (Sing/Speak)"], horizontal=True)
+    
+    lyrics_input = ""
+    if input_method == "📝 Text":
+        lyrics_input = st.text_area(
+            "📝 Enter Song Lyrics",
+            height=200,
+            placeholder="Paste your song lyrics here...\n\nExample: 'I'm walking on sunshine, whoa...'",
+            key="single_lyrics"
+        )
+    else:
+        st.info("Record yourself singing or speaking the lyrics. The AI will transcribe and analyze it!")
+        audio_val = st.audio_input("Record Audio")
+        if audio_val:
+            with st.spinner("🎙️ Transcribing audio..."):
+                transcribed = transcribe_audio(audio_val)
+                if transcribed:
+                    st.success("📝 Transcribed text:")
+                    lyrics_input = st.text_area("Edit transcribed text if needed:", value=transcribed, height=150)
+                else:
+                    st.error("❌ Could not transcribe audio. Please try again or use text input.")
     
     col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
     with col_btn2:
@@ -960,10 +1191,35 @@ if "Single" in mode:
         
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
         
-        # ---- Charts ----
-        st.markdown("### 📈 Visualizations")
+        # ---- 🎨 Color Palette Generation ----
+        st.markdown("### 🎨 Emotion Color Palette")
+        st.markdown("A unique aesthetic color gradient based on the song's emotional makeup:")
+        palette_colors = []
+        for em, sc in sorted_emotions.items():
+            if sc > 5.0:  # Include emotions with > 5% score
+                palette_colors.append(EMOTION_COLORS.get(em, "#ffffff"))
+        if not palette_colors:
+            palette_colors = ["#cccccc", "#999999"]
         
-        tab1, tab2, tab3 = st.tabs(["📊 Bar Chart", "🕸️ Radar Chart", "🏆 Ranking"])
+        # Render a CSS gradient block
+        gradient_css = f"linear-gradient(90deg, {', '.join(palette_colors)})"
+        st.markdown(f"""
+        <div style="
+            width: 100%;
+            height: 60px;
+            border-radius: 12px;
+            background: {gradient_css};
+            box-shadow: 0 4px 15px rgba(0,0,0,0.3);
+            margin-bottom: 1rem;
+        "></div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+        
+        # ---- Charts & Line Analysis ----
+        st.markdown("### 📈 Visualizations & Journey")
+        
+        tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Bar Chart", "🕸️ Radar Chart", "🏆 Ranking", "🎢 Journey Map", "📝 Line Highlighter"])
         
         with tab1:
             fig_bar = create_bar_chart(emotions, "Emotion Probability Distribution")
@@ -976,6 +1232,32 @@ if "Single" in mode:
         with tab3:
             fig_rank = create_emotion_ranking_chart(emotions)
             st.plotly_chart(fig_rank, use_container_width=True)
+            
+        # Get line-by-line predictions using the fast LR model
+        lr_model = trained_models["Logistic Regression"]
+        line_results = predict_emotion_line_by_line(lyrics_input, lr_model, tfidf_vectorizer, label_encoder)
+        
+        with tab4:
+            st.markdown("Analyze how the emotion fluctuates line by line through 's journey.")
+            fig_journey = create_journey_map_chart(line_results)
+            st.plotly_chart(fig_journey, use_container_width=True)
+            
+        with tab5:
+            st.markdown("#### Lyrics Line Highlighter")
+            st.markdown("Every line is color-coded by its dominant emotion.")
+            highlight_html = "<div style='background: rgba(0,0,0,0.2); padding: 20px; border-radius: 12px; line-height: 2.0; font-size: 1.1rem;'>"
+            for res in line_results:
+                line_color = EMOTION_COLORS.get(res["emotion"], "#ffffff")
+                emoji = EMOTION_EMOJIS.get(res["emotion"], "🎭")
+                # Create a slight background highlight
+                highlight_html += f"""
+                <span style="background-color: {line_color}33; border-left: 4px solid {line_color}; padding: 4px 10px; margin-bottom: 6px; display: inline-block; border-radius: 0 4px 4px 0; width: 100%;">
+                    <span style="font-size: 0.9em; margin-right: 8px;" title="{res['emotion'].capitalize()}">{emoji}</span>
+                    {res["text"]}
+                </span>
+                """
+            highlight_html += "</div>"
+            st.markdown(highlight_html, unsafe_allow_html=True)
         
         st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
         
@@ -1922,12 +2204,187 @@ elif "Search" in mode:
                         """, unsafe_allow_html=True)
 
 # ============================================================
+# MODE 6: ARTIST EMOTION DNA
+# ============================================================
+elif "Artist Emotion DNA" in mode:
+    st.markdown("## 👤 Artist Emotion DNA")
+    st.markdown("Analyze ALL songs by an artist to reveal their unique emotional fingerprint.")
+    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+    
+    st.markdown("### 🏆 Global Emotion Leaderboard")
+    st.markdown("Which artists represent each emotion the most? *(Based on artists with 5+ songs in DB)*")
+    
+    # Group by artist and calculate statistics
+    artist_counts = song_database.groupby(['Artist', 'emotion']).size().unstack(fill_value=0)
+    artist_pct = artist_counts.div(artist_counts.sum(axis=1), axis=0) * 100
+    artist_totals = song_database['Artist'].value_counts()
+    valid_artists = artist_totals[artist_totals >= 5].index
+    
+    if len(valid_artists) > 0:
+        valid_artist_pct = artist_pct.loc[artist_pct.index.isin(valid_artists)]
+        
+        # Display superlaties in 2 rows of 3
+        em_list = list(EMOTION_EMOJIS.keys())
+        rows = [st.columns(3), st.columns(3)]
+        
+        for idx, em in enumerate(em_list):
+            if idx < 6:
+                current_col = rows[idx // 3][idx % 3]
+                with current_col:
+                    if em in valid_artist_pct.columns and not valid_artist_pct[em].empty:
+                        top_artist = valid_artist_pct[em].idxmax()
+                        top_score = valid_artist_pct[em].max()
+                        emoji = EMOTION_EMOJIS.get(em, "🎭")
+                        color = EMOTION_COLORS.get(em, "#667eea")
+                        
+                        superlative = em.capitalize()
+                        if em == 'joy': superlative = 'Happiest'
+                        elif em == 'sadness': superlative = 'Saddest'
+                        elif em == 'anger': superlative = 'Angriest'
+                        elif em == 'love': superlative = 'Most Loving'
+                        elif em == 'fear': superlative = 'Most Fearful'
+                        elif em == 'surprise': superlative = 'Most Surprising'
+                        
+                        st.markdown(f"""
+                        <div style="
+                            background: rgba(255,255,255,0.05);
+                            border-radius: 12px;
+                            padding: 1.2rem;
+                            text-align: center;
+                            border: 1px solid rgba(255,255,255,0.1);
+                            margin-bottom: 1rem;
+                            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+                        ">
+                            <div style="color: #a0aec0; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 1px;">{superlative} Artist</div>
+                            <div style="font-size: 2.2rem; margin:0.4rem 0;">{emoji}</div>
+                            <div style="font-size: 1.2rem; font-weight:700; color:white;">{top_artist}</div>
+                            <div style="color: {color}; font-weight:800; font-size:1rem; margin-top:0.3rem;">{top_score:.1f}% {em.capitalize()}</div>
+                        </div>
+                        """, unsafe_allow_html=True)
+    
+    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+    st.markdown("### 🧬 Individual Artist DNA Profiler")
+    
+    unique_artists = sorted([str(a) for a in song_database['Artist'].unique() if pd.notna(a) and str(a) != "Unknown" and str(a) != "nan"])
+    selected_artist = st.selectbox("Select an Artist to view their full emotional profile:", unique_artists)
+    
+    if selected_artist:
+        artist_songs = song_database[song_database['Artist'] == selected_artist]
+        total_artist_songs = len(artist_songs)
+        
+        if total_artist_songs > 0:
+            st.markdown(f"**Analyzing {total_artist_songs} songs from {selected_artist}...**")
+            
+            # Calculate artist emotion distribution
+            emotion_counts = artist_songs['emotion'].value_counts()
+            artist_emotions = {e: 0.0 for e in EMOTION_EMOJIS.keys()}
+            for em, count in emotion_counts.items():
+                if em in artist_emotions:
+                    artist_emotions[em] = round((count / total_artist_songs) * 100, 1)
+                    
+            # Top emotion
+            top_emotion = max(artist_emotions, key=artist_emotions.get)
+            
+            col1, col2 = st.columns([1, 2])
+            with col1:
+                st.markdown(f"""
+                <div class="metric-card" style="margin-top:20px; text-align:center; padding: 2rem;">
+                    <div style="font-size: 4rem;">{EMOTION_EMOJIS.get(top_emotion, "🎭")}</div>
+                    <div style="font-size: 1.5rem; font-weight:700; color:white; margin-top:10px;">{top_emotion.upper()}</div>
+                    <div class="metric-label">{artist_emotions[top_emotion]:.1f}% Dominant</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Show top 5 songs for this artist for the dominant emotion
+                top_songs = artist_songs[artist_songs['emotion'] == top_emotion].head(5)
+                if not top_songs.empty:
+                    st.markdown(f"<br>**Top {top_emotion.capitalize()} Songs:**", unsafe_allow_html=True)
+                    for _, ts in top_songs.iterrows():
+                        st.markdown(f"- 🎵 {ts['Title']}")
+                        
+            with col2:
+                fig_artist = create_radar_chart(artist_emotions, f"{selected_artist}'s Emotion Profile")
+                st.plotly_chart(fig_artist, use_container_width=True)
+
+
+# ============================================================
+# MODE 7: MOOD PLAYLIST GENERATOR
+# ============================================================
+elif "Playlist" in mode:
+    st.markdown("## 🎵 AI Mood Playlist Generator")
+    st.markdown("Select an emotion, and the AI will curate a tailored playlist from the 6,000+ database and YouTube.")
+    st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+    
+    selected_mood = st.selectbox("How are you feeling?", options=list(EMOTION_EMOJIS.keys()), format_func=lambda x: f"{EMOTION_EMOJIS[x]} {x.capitalize()}")
+    
+    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 1])
+    with col_btn2:
+        generate_btn = st.button("✨ Generate My Playlist", use_container_width=True)
+        
+    if generate_btn:
+        with st.spinner("🎧 Curating your playlist..."):
+            time.sleep(1.5)
+            mood_songs = song_database[song_database['emotion'] == selected_mood]
+            # Shuffle and pick top 10
+            if not mood_songs.empty:
+                playlist_songs = mood_songs.sample(n=min(10, len(mood_songs)))
+                
+                st.success(f"Here is your {selected_mood.capitalize()} {EMOTION_EMOJIS[selected_mood]} Playlist!")
+                
+                # Render Playlist Timeline
+                for idx, row in playlist_songs.reset_index().iterrows():
+                    color = EMOTION_COLORS.get(selected_mood, "#667eea")
+                    st.markdown(f"""
+                    <div style="
+                        background: rgba(255,255,255,0.05);
+                        border-radius: 10px;
+                        padding: 1rem;
+                        margin-bottom: 0.8rem;
+                        border-left: 4px solid {color};
+                    ">
+                        <span style="font-size:1.2rem; font-weight:700; color:white;">{idx+1}. {row['Title']}</span>
+                        <span style="color:#a0aec0; margin-left: 10px;">by {row['Artist']}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
+                
+                st.markdown("### 🎬 Watch/Listen on YouTube")
+                yt_query = get_emotion_song_query(selected_mood)
+                yt_results = search_youtube(yt_query, max_results=3)
+                if yt_results:
+                    yt_cols = st.columns(3)
+                    for vidx, video in enumerate(yt_results):
+                        with yt_cols[vidx]:
+                            st.markdown(f"""
+                            <div style="
+                                background: rgba(255,255,255,0.05);
+                                border-radius: 12px;
+                                padding: 0.5rem;
+                                border: 1px solid rgba(255,255,255,0.1);
+                            ">
+                                <iframe width="100%" height="180"
+                                    src="https://www.youtube.com/embed/{video['video_id']}"
+                                    frameborder="0"
+                                    allowfullscreen
+                                    style="border-radius: 8px;">
+                                </iframe>
+                                <div style="padding: 0.4rem 0.2rem 0;">
+                                    <div style="color: white; font-weight: 600; font-size: 0.8rem;">{video['title'][:55]}</div>
+                                    <div style="color: #a0aec0; font-size: 0.7rem;">🎵 {video['channel']}</div>
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+            else:
+                st.warning("No songs found for this mood.")
+
+# ============================================================
 # FOOTER
 # ============================================================
 st.markdown('<div class="gradient-divider"></div>', unsafe_allow_html=True)
 st.markdown("""
 <div style="text-align: center; padding: 1rem; color: #718096; font-size: 0.85rem;">
-    <p>🎵 Song Lyrics Emotion Detection AI • A Data-Driven Approach to Understanding Human Emotions</p>
+    <p>🎵 Song Lyrics Emotion Detection • A Data-Driven Approach to Understanding Human Emotions</p>
     <p>Powered by <strong>DistilBERT</strong> • <strong>Logistic Regression</strong> • <strong>Random Forest</strong> • <strong>SVM</strong> • <strong>Naive Bayes</strong></p>
     <p>Built with <strong>Streamlit</strong> • <strong>HuggingFace Transformers</strong> • <strong>Scikit-Learn</strong> • <strong>YouTube API</strong></p>
 </div>
